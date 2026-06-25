@@ -1,0 +1,21 @@
+# Python
+ai-agent/.env
+ai-agent/__pycache__/
+ai-agent/**/__pycache__/
+ai-agent/*.pyc
+ai-agent/.venv/
+ai-agent/venv/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/.output/
+frontend/.vinxi/
+frontend/.tanstack/
+frontend/.nitro/
+frontend/*.local
+
+# Secrets
+.env
+.env.local
+*.env

@@ -1,0 +1,20 @@
+# Emergency Voice AI Agent — Dependencies
+# All free to use
+
+# Web framework
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+python-multipart==0.0.9      # needed for file uploads in FastAPI
+
+# STT — offline, free, CPU-only
+faster-whisper==1.0.3
+
+# LLM — Groq API (free tier at console.groq.com)
+groq==1.4.0
+
+# TTS — offline, free, uses OS speech engine
+pyttsx3==2.90
+
+# Utils
+pydantic==2.8.2
+python-dotenv==1.0.1
