@@ -107,17 +107,44 @@ function MapVehicleOverlay({
       <div className="absolute top-2 left-2 border-2 border-white px-2 py-1 text-xs font-black uppercase text-white shadow" style={{ background: color }}>
         {arrived ? `${emoji} On Scene` : `${emoji} ${eta}s away`}
       </div>
-      {/* Pulsing user pin */}
+
+      {/* SVG path line from vehicle to user */}
+      {!arrived && (
+        <svg className="absolute inset-0 w-full h-full" style={{ overflow: "visible" }}>
+          <line
+            x1={`${pos.x}%`} y1={`${pos.y}%`}
+            x2={`${userPct.x}%`} y2={`${userPct.y}%`}
+            stroke={color} strokeWidth="2" strokeDasharray="6,4" opacity="0.6"
+          />
+        </svg>
+      )}
+
+      {/* Pulsing user pin — large and obvious */}
       <div className="absolute" style={{ left: `${userPct.x}%`, top: `${userPct.y}%`, transform: "translate(-50%,-50%)" }}>
-        <div className="absolute rounded-full animate-ping opacity-50" style={{ width: 32, height: 32, background: color, top: "50%", left: "50%", transform: "translate(-50%,-50%)" }} />
-        <div className="relative flex items-center justify-center rounded-full border-2 border-white shadow" style={{ width: 20, height: 20, background: color }}>
-          <span style={{ fontSize: 9 }}>📍</span>
+        <div className="absolute rounded-full animate-ping" style={{ width: 48, height: 48, background: color, opacity: 0.3, top: "50%", left: "50%", transform: "translate(-50%,-50%)" }} />
+        <div className="absolute rounded-full animate-ping" style={{ width: 30, height: 30, background: color, opacity: 0.5, top: "50%", left: "50%", transform: "translate(-50%,-50%)", animationDelay: "0.3s" }} />
+        <div className="relative flex items-center justify-center rounded-full border-2 border-white shadow-lg" style={{ width: 26, height: 26, background: color }}>
+          <span style={{ fontSize: 12 }}>📍</span>
+        </div>
+        {/* "YOU" label */}
+        <div className="absolute whitespace-nowrap border border-white px-1 text-[9px] font-black text-white" style={{ background: color, top: "100%", left: "50%", transform: "translateX(-50%)", marginTop: 2 }}>
+          YOU
         </div>
       </div>
+
       {/* Moving vehicle */}
       {!arrived && (
         <div className="absolute" style={{ left: `${pos.x}%`, top: `${pos.y}%`, transform: "translate(-50%,-50%)", fontSize: 28, filter: "drop-shadow(0 2px 6px rgba(0,0,0,0.6))" }}>
           {emoji}
+        </div>
+      )}
+
+      {/* Arrived — flash on scene */}
+      {arrived && (
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div className="border-2 border-white px-4 py-2 text-sm font-black uppercase text-white shadow-xl" style={{ background: color }}>
+            {emoji} On Scene
+          </div>
         </div>
       )}
     </div>
