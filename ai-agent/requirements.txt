@@ -21,4 +21,5 @@ resend==2.32.2
 
 # Utils
 pydantic==2.8.2
+pydantic-core==2.20.1
 python-dotenv==1.0.1
