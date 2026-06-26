@@ -8,6 +8,26 @@ function uid() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
+/** Detect emergency keywords in transcribed speech */
+function isEmergencyText(text: string): boolean {
+  const t = text.toLowerCase();
+  return /\bi am\b|\bi'm\b|\bi was\b|\bi have\b|\bhelp\b|\binjured\b|\bhurt\b|\bbleeding\b|\baccident\b|\bcrash\b|\bfire\b|\bchest pain\b|\bcan't breathe\b|\bfell\b|\bstuck\b|\bemergency\b|\bsos\b|\battack\b|\bpain\b/.test(t);
+}
+
+/** Extract a short incident label from text */
+function detectIncidentType(text: string): string {
+  const t = text.toLowerCase();
+  if (/heart|chest|cardiac/.test(t))         return "Heart Attack";
+  if (/bleed|blood|wound/.test(t))            return "Bleeding";
+  if (/fire|burn|smoke/.test(t))              return "Fire";
+  if (/accident|crash|car|road/.test(t))      return "Road Accident";
+  if (/chok|breath|throat/.test(t))           return "Choking";
+  if (/fall|fell|fracture|bone/.test(t))      return "Fall / Fracture";
+  if (/snake|bite|sting/.test(t))             return "Animal Bite";
+  if (/theft|rob|attack|knife|weapon/.test(t)) return "Crime / Assault";
+  return "Emergency";
+}
+
 /** Encode raw Int16 PCM samples into a WAV blob */
 function encodeWav(samples: Int16Array, sampleRate: number): Blob {
   const buffer = new ArrayBuffer(44 + samples.byteLength);
@@ -74,6 +94,7 @@ export function useVoiceAgent() {
   const sessionIdRef       = useRef<string | null>(null);
   const sessionStartRef    = useRef<number>(0);
   const transcriptRef      = useRef<TranscriptEntry[]>([]);
+  const emailFiredRef      = useRef<boolean>(false);
 
   // Audio queue — prevents WAV chunks from overlapping
   const audioQueueRef   = useRef<Blob[]>([]);
@@ -243,6 +264,7 @@ export function useVoiceAgent() {
       setMedicalPassQr(null);
       setIncidentType("Emergency");
       sessionStartRef.current = Date.now();
+      emailFiredRef.current   = false;
 
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { channelCount: 1, sampleRate: 16000, echoCancellation: true, noiseSuppression: true },
@@ -304,7 +326,37 @@ export function useVoiceAgent() {
         let msg: any;
         try { msg = JSON.parse(ev.data as string); } catch { return; }
 
-        if (msg.type === "transcript") addEntry("user", msg.text);
+        if (msg.type === "transcript") {
+          addEntry("user", msg.text);
+          // Fire email directly from frontend when emergency keywords detected
+          // This works even if backend email fails (Render sleep, etc.)
+          if (!emailFiredRef.current && isEmergencyText(msg.text)) {
+            emailFiredRef.current = true;
+            const contacts: { name: string; email: string }[] = (() => {
+              try { return JSON.parse(localStorage.getItem("resq_contacts") || "[]"); } catch { return []; }
+            })();
+            const victimName: string = (() => {
+              try { return JSON.parse(localStorage.getItem("resq_name") || '""'); } catch { return ""; }
+            })();
+            const inc = detectIncidentType(msg.text);
+            if (contacts.length > 0) {
+              sendEmergencyAlerts({
+                contacts,
+                incidentType: inc,
+                summary: `Emergency detected: "${msg.text}"`,
+                victimName,
+                location: coords
+                  ? `${coords.lat.toFixed(5)}, ${coords.lng.toFixed(5)}`
+                  : "Unknown",
+              }).then(({ sent }) => {
+                if (sent.length > 0) {
+                  setEmailAlert({ incidentType: inc, sentTo: sent });
+                  addEntry("system", `📧 Emergency alert sent to ${sent.join(", ")}.`);
+                }
+              });
+            }
+          }
+        }
         if (msg.type === "done")       addEntry("resq", msg.full_text);
         if (msg.type === "error")      addEntry("system", `Error: ${msg.detail}`);
         if (msg.type === "email_sent") {
