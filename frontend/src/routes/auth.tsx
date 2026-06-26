@@ -98,6 +98,9 @@ function AuthPage() {
           <p className="mt-1 text-xs font-bold uppercase tracking-[0.2em] text-[#C62828]">
             Emergency Assistance System
           </p>
+          <p className="mt-3 border-2 border-black bg-black/5 px-3 py-2 text-xs font-semibold text-black/70">
+            Demo mode — OTP is always <span className="font-black text-black">123456</span>
+          </p>
         </div>
 
         {error && (
