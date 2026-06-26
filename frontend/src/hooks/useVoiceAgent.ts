@@ -295,9 +295,9 @@ export function useVoiceAgent() {
       };
 
       ws.onmessage = (ev) => {
-        // Binary = WAV chunk — queue it (no more overlap)
+        // Binary = MP3 from gTTS — decode via Web Audio API (handles MP3 + WAV)
         if (ev.data instanceof ArrayBuffer) {
-          enqueueAudio(new Blob([ev.data], { type: "audio/wav" }));
+          enqueueAudio(new Blob([ev.data], { type: "audio/mpeg" }));
           return;
         }
         let msg: any;

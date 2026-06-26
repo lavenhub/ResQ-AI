@@ -1,6 +1,6 @@
 """
 Emergency Voice AI Agent — FastAPI Backend
-Stack: faster-whisper (STT) + Groq LLM + pyttsx3 (TTS)
+Stack: faster-whisper (STT) + Groq LLM + gTTS (TTS)
 """
 
 from dotenv import load_dotenv
