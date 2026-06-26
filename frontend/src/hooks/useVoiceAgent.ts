@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
 import { apiFetch, wsUrl } from "@/lib/api";
 import type { TranscriptEntry, VoiceStatus } from "@/lib/types";
+import { sendEmergencyAlerts } from "@/lib/emailAlert";
 
 function uid() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -311,6 +312,30 @@ export function useVoiceAgent() {
           setIncidentType(inc);
           setEmailAlert({ incidentType: inc, sentTo: msg.sent_to ?? [] });
           addEntry("system", `📧 Alert sent to ${(msg.sent_to ?? []).join(", ") || "contacts"}.`);
+
+          // Also fire EmailJS from frontend — sends to ANY email, no domain needed
+          const contacts: { name: string; email: string }[] = (() => {
+            try { return JSON.parse(localStorage.getItem("resq_contacts") || "[]"); } catch { return []; }
+          })();
+          const victimName: string = (() => {
+            try { return JSON.parse(localStorage.getItem("resq_name") || '""'); } catch { return ""; }
+          })();
+          if (contacts.length > 0) {
+            sendEmergencyAlerts({
+              contacts,
+              incidentType: inc,
+              summary:      msg.full_text || inc,
+              victimName,
+              location:     coords
+                ? `${coords.lat.toFixed(5)}, ${coords.lng.toFixed(5)}`
+                : "Unknown",
+            }).then(({ sent }) => {
+              if (sent.length > 0) {
+                setEmailAlert({ incidentType: inc, sentTo: sent });
+                addEntry("system", `📧 Email alert delivered to ${sent.join(", ")}.`);
+              }
+            });
+          }
         }
         if (msg.type === "vehicle_dispatch") {
           setVehicleDispatch({
