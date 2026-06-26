@@ -118,4 +118,11 @@ Reply ONLY with valid JSON matching this exact shape (no markdown, no explanatio
 
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    port = int(os.environ.get("PORT", 8000))
+    is_prod = os.environ.get("RENDER") or os.environ.get("RAILWAY_ENVIRONMENT")
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=port,
+        reload=not is_prod,   # no reload in production
+    )

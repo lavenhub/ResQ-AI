@@ -1,100 +1,84 @@
 """
-Text-to-Speech using pyttsx3 (offline, Windows SAPI)
-+ optional Groq-based translation to English before speaking.
+Text-to-Speech using gTTS (Google TTS — free, no API key, works on Linux/Windows/Mac)
 
-Strategy:
-- pyttsx3 on Windows only speaks English well.
-- For non-English sessions, we translate the response to English before TTS.
-- The transcript shown to the user still shows the original language text.
-- This gives: correct language display + audible English speech.
+- gTTS outputs MP3, we convert to WAV using pydub so the browser can play it
+- Supports any language Google TTS supports (English, Hindi, Tamil, etc.)
+- For non-English: speaks in that language natively (no translation needed)
+- Falls back gracefully on any error
 """
 
+import io
 import os
 import re
 import tempfile
-import pyttsx3
 import threading
 from typing import Generator
 
-# pyttsx3 is not thread-safe — serialize all calls
+from gtts import gTTS
+from pydub import AudioSegment
+
 _lock = threading.Lock()
 
+# Maps frontend language name → gTTS language code
+GTTS_LANG: dict[str, str] = {
+    "English":   "en",
+    "Hindi":     "hi",
+    "Bengali":   "bn",
+    "Telugu":    "te",
+    "Marathi":   "mr",
+    "Tamil":     "ta",
+    "Gujarati":  "gu",
+    "Kannada":   "kn",
+    "Malayalam": "ml",
+    "Odia":      "or",
+    "Punjabi":   "pa",
+    "Assamese":  "as",
+    "Nepali":    "ne",
+    "Sindhi":    "sd",
+    "Kashmiri":  "ur",   # closest available
+    "Sanskrit":  "hi",   # closest available
+}
 
-def _get_voice_id(engine: pyttsx3.Engine) -> str | None:
-    voices = engine.getProperty("voices")
-    if not voices:
-        return None
-    # Prefer index 1 (usually a clearer/female voice on Windows SAPI)
-    return voices[min(1, len(voices) - 1)].id
 
+def _text_to_wav_bytes(text: str, language: str = "English") -> bytes:
+    """
+    Convert text to WAV bytes using gTTS.
+    gTTS outputs MP3 → we convert to WAV via pydub.
+    """
+    lang_code = GTTS_LANG.get(language, "en")
 
-def _render_to_wav(text: str, rate: int, volume: float) -> bytes:
-    """Render text → WAV bytes via pyttsx3. Call only while _lock is held."""
-    engine = pyttsx3.init()
-    engine.setProperty("rate",   rate)
-    engine.setProperty("volume", volume)
-    vid = _get_voice_id(engine)
-    if vid:
-        engine.setProperty("voice", vid)
-
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-        tmp_path = tmp.name
     try:
-        engine.save_to_file(text, tmp_path)
-        engine.runAndWait()
-        engine.stop()
-        with open(tmp_path, "rb") as f:
-            return f.read()
-    finally:
-        os.unlink(tmp_path)
+        tts = gTTS(text=text, lang=lang_code, slow=False)
+        mp3_buf = io.BytesIO()
+        tts.write_to_fp(mp3_buf)
+        mp3_buf.seek(0)
 
+        # Convert MP3 → WAV in memory
+        audio = AudioSegment.from_mp3(mp3_buf)
+        wav_buf = io.BytesIO()
+        audio.export(wav_buf, format="wav")
+        return wav_buf.getvalue()
 
-def _translate_to_english(text: str) -> str:
-    """
-    Translate non-English text to English using Groq LLM (fast, free).
-    Falls back to original text on any error.
-    """
-    try:
-        from core.llm import get_client
-        client = get_client()
-        resp = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            max_tokens=200,
-            messages=[{
-                "role": "user",
-                "content": (
-                    "Translate the following emergency dispatcher message to English. "
-                    "Return ONLY the translation, no explanation, no quotes:\n\n"
-                    + text
-                ),
-            }],
-        )
-        return resp.choices[0].message.content.strip()
-    except Exception:
-        return text
-
-
-def _prepare_text_for_tts(text: str, language: str = "English") -> str:
-    """
-    If language is not English, translate to English before speaking.
-    pyttsx3 on Windows cannot pronounce non-Latin scripts.
-    """
-    if language == "English":
-        return text
-    return _translate_to_english(text)
+    except Exception as e:
+        print(f"[TTS] Error: {e}")
+        # Return a silent 0.5s WAV as fallback
+        silence = AudioSegment.silent(duration=500)
+        buf = io.BytesIO()
+        silence.export(buf, format="wav")
+        return buf.getvalue()
 
 
 # ─── Public API ───────────────────────────────────────────────────────────────
 
 def speak_to_bytes(text: str, rate: int = 150, volume: float = 1.0,
                    language: str = "English") -> bytes:
-    """Convert text to WAV bytes. Translates to English first if needed."""
-    tts_text = _prepare_text_for_tts(text, language)
+    """Convert text to WAV bytes. Thread-safe."""
     with _lock:
-        return _render_to_wav(tts_text, rate, volume)
+        return _text_to_wav_bytes(text, language)
 
 
 def split_into_sentences(text: str) -> list[str]:
+    """Split text on sentence-ending punctuation."""
     parts = re.split(r'(?<=[.!?])\s+', text.strip())
     return [p.strip() for p in parts if p.strip()]
 
@@ -106,8 +90,8 @@ def stream_sentences_to_wav(
     language: str = "English",
 ) -> Generator[bytes, None, None]:
     """
-    Consume LLM token stream → accumulate into sentences →
-    translate if needed → yield WAV bytes per sentence.
+    Consume LLM token stream → accumulate sentences → yield WAV per sentence.
+    Yields audio as soon as each sentence is complete for low-latency streaming.
     """
     buffer       = ""
     sentence_end = re.compile(r'[.!?]')
@@ -129,20 +113,17 @@ def stream_sentences_to_wav(
                     complete = []
 
             for sentence in complete:
-                if sentence:
-                    tts_text = _prepare_text_for_tts(sentence, language)
+                if sentence.strip():
                     with _lock:
-                        yield _render_to_wav(tts_text, rate, volume)
+                        yield _text_to_wav_bytes(sentence, language)
 
     remainder = buffer.strip()
     if remainder:
-        tts_text = _prepare_text_for_tts(remainder, language)
         with _lock:
-            yield _render_to_wav(tts_text, rate, volume)
+            yield _text_to_wav_bytes(remainder, language)
 
 
 def get_available_voices() -> list[dict]:
-    engine = pyttsx3.init()
-    voices = engine.getProperty("voices")
-    engine.stop()
-    return [{"id": v.id, "name": v.name, "lang": v.languages} for v in voices]
+    """List supported languages."""
+    return [{"id": code, "name": name, "lang": [code]}
+            for name, code in GTTS_LANG.items()]
