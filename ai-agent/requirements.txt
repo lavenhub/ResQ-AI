@@ -1,25 +1,25 @@
 # Emergency Voice AI Agent — Dependencies
-# Pinned for Python 3.11 compatibility on Render
+# Compatible with Python 3.11–3.14
 
 # Web framework
-fastapi==0.115.0
-uvicorn[standard]==0.30.6
-python-multipart==0.0.9
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.6
+python-multipart>=0.0.9
 
-# STT — offline, free, CPU-only
-faster-whisper==1.0.3
+# STT
+faster-whisper>=1.0.3
 
-# LLM — Groq API (free tier at console.groq.com)
-groq==1.4.0
+# LLM
+groq>=1.4.0
 
-# TTS — works on Linux/Windows/Mac, no API key needed
-gTTS==2.5.1
-pydub==0.25.1
-requests==2.34.2
+# TTS
+gTTS>=2.5.1
+pydub>=0.25.1
+requests>=2.34.0
 
-# Email alerts
-resend==2.32.2
+# Email
+resend>=2.32.0
 
-# Utils — use versions with pre-built wheels for Python 3.11
-pydantic==2.8.2
-python-dotenv==1.0.1
+# Utils — 2.11+ has pre-built wheels for Python 3.14
+pydantic>=2.11.0
+python-dotenv>=1.0.1
