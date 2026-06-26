@@ -9,7 +9,6 @@ import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 export default defineConfig({
   tanstackStart: {
     server: { entry: "server" },
-    target: "static",         // output static files instead of SSR server
   },
   vite: {
     server: {
