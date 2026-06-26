@@ -8,8 +8,8 @@ export function AuthGuard({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const phone = typeof window !== "undefined" ? localStorage.getItem("resq_phone") : null;
-    if (!phone && pathname !== "/auth") {
-      navigate({ to: "/auth" });
+    if (!phone && pathname !== "/auth" && pathname !== "/landing") {
+      navigate({ to: "/landing" });
     } else {
       setReady(true);
     }
