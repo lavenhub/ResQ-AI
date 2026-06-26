@@ -326,11 +326,13 @@ export function useVoiceAgent() {
         let msg: any;
         try { msg = JSON.parse(ev.data as string); } catch { return; }
 
-        if (msg.type === "transcript") {
-          addEntry("user", msg.text);
-          // Fire email directly from frontend when emergency keywords detected
-          // This works even if backend email fails (Render sleep, etc.)
-          if (!emailFiredRef.current && isEmergencyText(msg.text)) {
+        if (msg.type === "transcript") addEntry("user", msg.text);
+
+        if (msg.type === "done") {
+          addEntry("resq", msg.full_text);
+
+          // Fire email on FIRST agent response — guaranteed delivery
+          if (!emailFiredRef.current) {
             emailFiredRef.current = true;
             const contacts: { name: string; email: string }[] = (() => {
               try { return JSON.parse(localStorage.getItem("resq_contacts") || "[]"); } catch { return []; }
@@ -338,26 +340,30 @@ export function useVoiceAgent() {
             const victimName: string = (() => {
               try { return JSON.parse(localStorage.getItem("resq_name") || '""'); } catch { return ""; }
             })();
-            const inc = detectIncidentType(msg.text);
+            console.log("[EMAIL] Firing alert. Contacts:", contacts.length, "| SERVICE_ID:", import.meta.env.VITE_EMAILJS_SERVICE_ID ? "SET" : "MISSING");
             if (contacts.length > 0) {
+              const inc = detectIncidentType(msg.full_text || "emergency");
               sendEmergencyAlerts({
                 contacts,
                 incidentType: inc,
-                summary: `Emergency detected: "${msg.text}"`,
+                summary: msg.full_text || "Emergency in progress",
                 victimName,
-                location: coords
-                  ? `${coords.lat.toFixed(5)}, ${coords.lng.toFixed(5)}`
-                  : "Unknown",
-              }).then(({ sent }) => {
+                location: coords ? `${coords.lat.toFixed(5)}, ${coords.lng.toFixed(5)}` : "Unknown",
+              }).then(({ sent, failed }) => {
+                console.log("[EMAIL] Sent:", sent, "Failed:", failed);
                 if (sent.length > 0) {
                   setEmailAlert({ incidentType: inc, sentTo: sent });
                   addEntry("system", `📧 Emergency alert sent to ${sent.join(", ")}.`);
                 }
+                if (failed.length > 0) {
+                  addEntry("system", `⚠️ Alert failed for ${failed.length} contact(s). Check EmailJS keys in Vercel.`);
+                }
               });
+            } else {
+              addEntry("system", "⚠️ No emergency contacts set. Go to Profile to add contacts.");
             }
           }
         }
-        if (msg.type === "done")       addEntry("resq", msg.full_text);
         if (msg.type === "error")      addEntry("system", `Error: ${msg.detail}`);
         if (msg.type === "email_sent") {
           const inc = msg.incident_type || "Emergency";
