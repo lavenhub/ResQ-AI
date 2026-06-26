@@ -147,6 +147,12 @@ function AuthPage() {
                 Change Number
               </button>
             </div>
+            {/* Demo hint — prominent */}
+            <div className="rounded border-2 border-[#C62828] bg-[#C62828]/10 px-4 py-3 text-center">
+              <p className="text-xs text-black/60">Demo mode — no SMS sent.</p>
+              <p className="mt-1 text-xl font-black tracking-[0.3em] text-black">1 2 3 4 5 6</p>
+              <p className="mt-1 text-[10px] font-bold uppercase text-[#C62828]">Use this code</p>
+            </div>
             <div className="flex justify-between gap-2">
               {otp.map((d, i) => (
                 <input
@@ -164,13 +170,13 @@ function AuthPage() {
               ))}
             </div>
             <p className="text-xs text-black/70">
-              Code sent to <span className="font-bold text-black">{phone}</span>.{" "}
+              Signing in as <span className="font-bold text-black">{phone}</span>.{" "}
               <button
-                onClick={sendOtp}
+                onClick={() => { setStep("phone"); setOtp(["","","","","",""]); setError(null); }}
                 className="font-bold uppercase text-[#C62828]"
                 type="button"
               >
-                Resend
+                Change
               </button>
             </p>
             <button

@@ -41,8 +41,8 @@ const VEHICLE_EMOJI: Record<string, string> = {
 const VEHICLE_COLOR: Record<string, string> = {
   ambulance: "#C62828", fire: "#E65100", police: "#1565C0",
 };
-const TRAVEL_MS = 30_000;
-const SPAWN_KM  = 1.5;
+const TRAVEL_MS = 45_000;  // 45 seconds travel time — clearly visible slow movement
+const SPAWN_KM  = 2.0;     // spawn 2km away
 
 function offsetLatLng(lat: number, lng: number, bearingDeg: number, km: number) {
   const R = 6371, d = km / R, b = (bearingDeg * Math.PI) / 180;
@@ -159,12 +159,13 @@ function EmergencyMap({ userCoords, vehicleType, incidentType }: EmergencyMapPro
 
     setArrived(false);
     setEta(Math.round(TRAVEL_MS / 1000));
-    startRef.current = null;
+
+    // Use explicit start time — avoids stale ref issues
+    const startTime = performance.now();
 
     // Animation loop
     const animate = (ts: number) => {
-      if (!startRef.current) startRef.current = ts;
-      const p  = Math.min((ts - startRef.current) / TRAVEL_MS, 1);
+      const p  = Math.min((ts - startTime) / TRAVEL_MS, 1);
       const ep = ease(p);
 
       const curLat = lerp(spawn.lat, userCoords.lat, ep);
