@@ -1,4 +1,5 @@
 # Emergency Voice AI Agent — Dependencies
+# Pinned for Python 3.11 compatibility on Render
 
 # Web framework
 fastapi==0.115.0
@@ -19,7 +20,6 @@ requests==2.34.2
 # Email alerts
 resend==2.32.2
 
-# Utils
+# Utils — use versions with pre-built wheels for Python 3.11
 pydantic==2.8.2
-pydantic-core==2.20.1
 python-dotenv==1.0.1
