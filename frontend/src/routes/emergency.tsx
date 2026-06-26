@@ -1,6 +1,8 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { AlertCircle, Copy, Mail, Mic, MicOff, QrCode, RefreshCw, Send } from "lucide-react";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
 import { AuthGuard } from "@/components/AuthGuard";
 import { BottomNav } from "@/components/BottomNav";
 import { useVoiceAgent } from "@/hooks/useVoiceAgent";
@@ -30,21 +32,17 @@ function loadLocal<T>(key: string, fallback: T): T {
   } catch { return fallback; }
 }
 
-// ─── Vehicle helpers (shared by overlay + status bar) ────────────────────────
+// ─── Leaflet Emergency Map ────────────────────────────────────────────────────
+// Real interactive map with animated vehicle marker moving along actual coords.
 
 const VEHICLE_EMOJI: Record<string, string> = {
-  ambulance: "🚑",
-  fire:      "🚒",
-  police:    "🚔",
+  ambulance: "🚑", fire: "🚒", police: "🚔",
 };
 const VEHICLE_COLOR: Record<string, string> = {
-  ambulance: "#C62828",
-  fire:      "#E65100",
-  police:    "#1565C0",
+  ambulance: "#C62828", fire: "#E65100", police: "#1565C0",
 };
 const TRAVEL_MS = 30_000;
-const SPAWN_KM  = 2.0;
-const MAP_PAD   = 0.028;
+const SPAWN_KM  = 1.5;
 
 function offsetLatLng(lat: number, lng: number, bearingDeg: number, km: number) {
   const R = 6371, d = km / R, b = (bearingDeg * Math.PI) / 180;
@@ -53,98 +51,171 @@ function offsetLatLng(lat: number, lng: number, bearingDeg: number, km: number) 
   const λ2 = λ1 + Math.atan2(Math.sin(b) * Math.sin(d) * Math.cos(φ1), Math.cos(d) - Math.sin(φ1) * Math.sin(φ2));
   return { lat: (φ2 * 180) / Math.PI, lng: (λ2 * 180) / Math.PI };
 }
-function toPct(lat: number, lng: number, minLat: number, maxLat: number, minLng: number, maxLng: number) {
-  return {
-    x: ((lng - minLng) / (maxLng - minLng)) * 100,
-    y: ((maxLat - lat) / (maxLat - minLat)) * 100,
-  };
+
+function lerp(a: number, b: number, t: number) { return a + (b - a) * t; }
+function ease(p: number) { return p < 0.5 ? 2 * p * p : -1 + (4 - 2 * p) * p; }
+
+interface EmergencyMapProps {
+  userCoords: { lat: number; lng: number };
+  vehicleType?: VehicleType;
+  incidentType?: string;
 }
 
-// ─── MapVehicleOverlay ────────────────────────────────────────────────────────
-// Animates vehicle emoji over the existing map iframe — no second map.
-
-function MapVehicleOverlay({
-  vehicleType,
-  userCoords,
-}: {
-  vehicleType: VehicleType;
-  userCoords: { lat: number; lng: number };
-}) {
-  const emoji   = VEHICLE_EMOJI[vehicleType] ?? "🚑";
-  const color   = VEHICLE_COLOR[vehicleType] ?? "#C62828";
-  const bearing = useRef(Math.floor(Math.random() * 360));
-  const spawn   = useRef(offsetLatLng(userCoords.lat, userCoords.lng, bearing.current, SPAWN_KM));
-
-  const minLat = userCoords.lat - MAP_PAD, maxLat = userCoords.lat + MAP_PAD;
-  const minLng = userCoords.lng - MAP_PAD, maxLng = userCoords.lng + MAP_PAD;
-
-  const spawnPct = toPct(spawn.current.lat, spawn.current.lng, minLat, maxLat, minLng, maxLng);
-  const userPct  = toPct(userCoords.lat, userCoords.lng, minLat, maxLat, minLng, maxLng);
-
-  const startRef = useRef<number | null>(null);
-  const rafRef   = useRef<number | null>(null);
-  const [pos, setPos]         = useState(spawnPct);
+function EmergencyMap({ userCoords, vehicleType, incidentType }: EmergencyMapProps) {
+  const mapDivRef     = useRef<HTMLDivElement>(null);
+  const mapRef        = useRef<L.Map | null>(null);
+  const userMarkerRef = useRef<L.Marker | null>(null);
+  const vehicleMarkerRef = useRef<L.Marker | null>(null);
+  const polylineRef   = useRef<L.Polyline | null>(null);
+  const rafRef        = useRef<number | null>(null);
+  const startRef      = useRef<number | null>(null);
+  const [eta, setEta] = useState<number | null>(null);
   const [arrived, setArrived] = useState(false);
-  const [eta, setEta]         = useState(Math.round(TRAVEL_MS / 1000));
+  const spawnRef      = useRef<{ lat: number; lng: number } | null>(null);
 
+  // Initialise map once
   useEffect(() => {
-    const animate = (ts: number) => {
-      if (!startRef.current) startRef.current = ts;
-      const p    = Math.min((ts - startRef.current) / TRAVEL_MS, 1);
-      const ease = p < 0.5 ? 2 * p * p : -1 + (4 - 2 * p) * p;
-      setPos({ x: spawnPct.x + (userPct.x - spawnPct.x) * ease, y: spawnPct.y + (userPct.y - spawnPct.y) * ease });
-      setEta(Math.max(0, Math.round(((1 - p) * TRAVEL_MS) / 1000)));
-      if (p < 1) rafRef.current = requestAnimationFrame(animate);
-      else setArrived(true);
+    if (!mapDivRef.current || mapRef.current) return;
+
+    const map = L.map(mapDivRef.current, {
+      center: [userCoords.lat, userCoords.lng],
+      zoom: 14,
+      zoomControl: true,
+      attributionControl: false,
+    });
+
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+    }).addTo(map);
+
+    // User pin
+    const userIcon = L.divIcon({
+      className: "",
+      html: `<div style="
+        width:36px;height:36px;border-radius:50%;
+        background:#C62828;border:3px solid white;
+        display:flex;align-items:center;justify-content:center;
+        box-shadow:0 2px 8px rgba(0,0,0,0.4);
+        font-size:16px;
+      ">📍</div>
+      <div style="
+        position:absolute;top:38px;left:50%;transform:translateX(-50%);
+        background:#C62828;color:white;font-size:9px;font-weight:900;
+        padding:1px 4px;white-space:nowrap;
+      ">YOU</div>`,
+      iconSize: [36, 36],
+      iconAnchor: [18, 18],
+    });
+
+    const userMarker = L.marker([userCoords.lat, userCoords.lng], { icon: userIcon }).addTo(map);
+    userMarkerRef.current = userMarker;
+    mapRef.current = map;
+
+    return () => {
+      map.remove();
+      mapRef.current = null;
     };
-    rafRef.current = requestAnimationFrame(animate);
-    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
   }, []); // eslint-disable-line
 
+  // Start vehicle animation when dispatched
+  useEffect(() => {
+    if (!vehicleType || !mapRef.current) return;
+
+    const map    = mapRef.current;
+    const emoji  = VEHICLE_EMOJI[vehicleType] ?? "🚑";
+    const color  = VEHICLE_COLOR[vehicleType] ?? "#C62828";
+    const bearing = Math.floor(Math.random() * 360);
+    const spawn  = offsetLatLng(userCoords.lat, userCoords.lng, bearing, SPAWN_KM);
+    spawnRef.current = spawn;
+
+    // Vehicle marker
+    const vehicleIcon = L.divIcon({
+      className: "",
+      html: `<div style="
+        font-size:32px;filter:drop-shadow(0 3px 6px rgba(0,0,0,0.5));
+        transition: transform 0.3s;
+      " id="vehicle-emoji">${emoji}</div>`,
+      iconSize: [40, 40],
+      iconAnchor: [20, 20],
+    });
+
+    if (vehicleMarkerRef.current) vehicleMarkerRef.current.remove();
+    const vehicleMarker = L.marker([spawn.lat, spawn.lng], { icon: vehicleIcon }).addTo(map);
+    vehicleMarkerRef.current = vehicleMarker;
+
+    // Dashed route line
+    if (polylineRef.current) polylineRef.current.remove();
+    const polyline = L.polyline(
+      [[spawn.lat, spawn.lng], [userCoords.lat, userCoords.lng]],
+      { color, dashArray: "8 6", weight: 3, opacity: 0.7 },
+    ).addTo(map);
+    polylineRef.current = polyline;
+
+    // Fit map to show both points
+    map.fitBounds(
+      L.latLngBounds([[spawn.lat, spawn.lng], [userCoords.lat, userCoords.lng]]),
+      { padding: [40, 40] },
+    );
+
+    setArrived(false);
+    setEta(Math.round(TRAVEL_MS / 1000));
+    startRef.current = null;
+
+    // Animation loop
+    const animate = (ts: number) => {
+      if (!startRef.current) startRef.current = ts;
+      const p  = Math.min((ts - startRef.current) / TRAVEL_MS, 1);
+      const ep = ease(p);
+
+      const curLat = lerp(spawn.lat, userCoords.lat, ep);
+      const curLng = lerp(spawn.lng, userCoords.lng, ep);
+
+      vehicleMarker.setLatLng([curLat, curLng]);
+
+      // Update dashed line to only show remaining path
+      polyline.setLatLngs([[curLat, curLng], [userCoords.lat, userCoords.lng]]);
+
+      setEta(Math.max(0, Math.round(((1 - p) * TRAVEL_MS) / 1000)));
+
+      if (p < 1) {
+        rafRef.current = requestAnimationFrame(animate);
+      } else {
+        setArrived(true);
+        polyline.remove();
+        // Flash vehicle on user pin
+        vehicleMarker.setLatLng([userCoords.lat, userCoords.lng]);
+      }
+    };
+
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(animate);
+
+    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
+  }, [vehicleType]); // eslint-disable-line
+
+  const color = vehicleType ? VEHICLE_COLOR[vehicleType] : "#C62828";
+  const emoji = vehicleType ? VEHICLE_EMOJI[vehicleType] : "";
+
   return (
-    <div className="absolute inset-0 pointer-events-none">
-      {/* ETA badge */}
-      <div className="absolute top-2 left-2 border-2 border-white px-2 py-1 text-xs font-black uppercase text-white shadow" style={{ background: color }}>
-        {arrived ? `${emoji} On Scene` : `${emoji} ${eta}s away`}
-      </div>
+    <div className="relative border-2 border-black bg-white overflow-hidden" style={{ height: 260 }}>
+      <div ref={mapDivRef} className="absolute inset-0" />
 
-      {/* SVG path line from vehicle to user */}
-      {!arrived && (
-        <svg className="absolute inset-0 w-full h-full" style={{ overflow: "visible" }}>
-          <line
-            x1={`${pos.x}%`} y1={`${pos.y}%`}
-            x2={`${userPct.x}%`} y2={`${userPct.y}%`}
-            stroke={color} strokeWidth="2" strokeDasharray="6,4" opacity="0.6"
-          />
-        </svg>
-      )}
-
-      {/* Pulsing user pin — large and obvious */}
-      <div className="absolute" style={{ left: `${userPct.x}%`, top: `${userPct.y}%`, transform: "translate(-50%,-50%)" }}>
-        <div className="absolute rounded-full animate-ping" style={{ width: 48, height: 48, background: color, opacity: 0.3, top: "50%", left: "50%", transform: "translate(-50%,-50%)" }} />
-        <div className="absolute rounded-full animate-ping" style={{ width: 30, height: 30, background: color, opacity: 0.5, top: "50%", left: "50%", transform: "translate(-50%,-50%)", animationDelay: "0.3s" }} />
-        <div className="relative flex items-center justify-center rounded-full border-2 border-white shadow-lg" style={{ width: 26, height: 26, background: color }}>
-          <span style={{ fontSize: 12 }}>📍</span>
-        </div>
-        {/* "YOU" label */}
-        <div className="absolute whitespace-nowrap border border-white px-1 text-[9px] font-black text-white" style={{ background: color, top: "100%", left: "50%", transform: "translateX(-50%)", marginTop: 2 }}>
-          YOU
-        </div>
-      </div>
-
-      {/* Moving vehicle */}
-      {!arrived && (
-        <div className="absolute" style={{ left: `${pos.x}%`, top: `${pos.y}%`, transform: "translate(-50%,-50%)", fontSize: 28, filter: "drop-shadow(0 2px 6px rgba(0,0,0,0.6))" }}>
-          {emoji}
+      {/* ETA badge — only shown when vehicle is dispatched */}
+      {vehicleType && (
+        <div
+          className="absolute top-2 left-2 z-[1000] border-2 border-white px-3 py-1.5 text-xs font-black uppercase text-white shadow-lg"
+          style={{ background: color }}
+        >
+          {arrived
+            ? `${emoji} On Scene`
+            : `${emoji} ${eta}s away`}
         </div>
       )}
 
-      {/* Arrived — flash on scene */}
-      {arrived && (
-        <div className="absolute inset-0 flex items-center justify-center">
-          <div className="border-2 border-white px-4 py-2 text-sm font-black uppercase text-white shadow-xl" style={{ background: color }}>
-            {emoji} On Scene
-          </div>
+      {/* No GPS fallback */}
+      {!userCoords && (
+        <div className="absolute inset-0 flex items-center justify-center text-xs font-bold uppercase tracking-wider text-black/60 bg-white z-10">
+          Acquiring GPS...
         </div>
       )}
     </div>
@@ -223,27 +294,19 @@ function EmergencyPage() {
           </select>
         </div>
 
-        {/* ── Map — vehicle animates on top of this same map ── */}
-        <div className="relative border-2 border-black bg-white overflow-hidden" style={{ height: 220 }}>
-          {agent.coords ? (
-            <iframe
-              title="map"
-              className="absolute inset-0 h-full w-full border-0"
-              src={`https://www.openstreetmap.org/export/embed.html?bbox=${agent.coords.lng - MAP_PAD}%2C${agent.coords.lat - MAP_PAD}%2C${agent.coords.lng + MAP_PAD}%2C${agent.coords.lat + MAP_PAD}&layer=mapnik&marker=${agent.coords.lat}%2C${agent.coords.lng}`}
-            />
-          ) : (
-            <div className="flex h-full items-center justify-center text-xs font-bold uppercase tracking-wider text-black/60">Acquiring GPS...</div>
-          )}
-          {agent.coords && !agent.vehicleDispatch && (
-            <div className="absolute bottom-2 right-2 border-2 border-black bg-white px-2 py-1 text-[10px] font-bold text-black">
-              {agent.coords.lat.toFixed(4)}, {agent.coords.lng.toFixed(4)}
-            </div>
-          )}
-          {/* Vehicle overlay on the SAME map — no second iframe */}
-          {agent.vehicleDispatch && agent.coords && (
-            <MapVehicleOverlay vehicleType={agent.vehicleDispatch.vehicleType} userCoords={agent.coords} />
-          )}
-        </div>
+        {/* ── Leaflet Map — vehicle animates as real marker ── */}
+        {agent.coords && (
+          <EmergencyMap
+            userCoords={agent.coords}
+            vehicleType={agent.vehicleDispatch?.vehicleType}
+            incidentType={agent.vehicleDispatch?.incidentType}
+          />
+        )}
+        {!agent.coords && (
+          <div className="flex items-center justify-center border-2 border-black bg-white text-xs font-bold uppercase tracking-wider text-black/60" style={{ height: 260 }}>
+            Acquiring GPS...
+          </div>
+        )}
 
         {/* ── Vehicle status bar ── */}
         {agent.vehicleDispatch && (
