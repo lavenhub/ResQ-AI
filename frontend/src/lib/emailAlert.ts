@@ -42,6 +42,8 @@ export async function sendEmergencyAlerts(params: {
       await emailjs.send(SERVICE_ID, TEMPLATE_ID, {
         to_email:      contact.email,
         to_name:       contact.name,
+        email:         contact.email,
+        name:          contact.name,
         victim_name:   params.victimName  || "Unknown",
         incident_type: params.incidentType,
         summary:       params.summary,
